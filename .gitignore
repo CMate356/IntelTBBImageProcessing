@@ -67,3 +67,8 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+.vs/
+*.vsidx
+*.db-shm
+*.db-wal
