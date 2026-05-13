@@ -67,3 +67,47 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+.vs/
+*.vsidx
+*.db-shm
+*.db-wal
+
+# Compiled
+*.o
+*.obj
+*.exe
+*.out
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# Build folders
+x64/
+x86/
+Debug/
+Release/
+
+# Visual Studio
+.vs/
+*.vsidx
+*.db-shm
+*.db-wal
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+ipch/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+# Data / outputs
+data/*.png
+data/*.jpg
+data/*.bmp
+results/*.csv
