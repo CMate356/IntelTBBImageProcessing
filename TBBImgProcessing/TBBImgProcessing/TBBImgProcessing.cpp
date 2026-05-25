@@ -7,7 +7,8 @@
 #include <tbb/blocked_range.h>
 #include <tbb/global_control.h>
 
-// ---- Structura imagine ----
+// structura de baza pentru o imagine grayscale
+// pixelii sunt stocati ca un vector 1D, accesat prin row*width+col
 struct Image {
     int width = 0, height = 0;
     std::vector<uint8_t> data;
@@ -20,7 +21,8 @@ struct Image {
     }
 };
 
-// ---- Generare imagine sintetica ----
+// genereaza o imagine sintetica cu pattern sinusoidal + zgomot
+// folosim seed diferit pentru fiecare imagine ca sa arate diferit
 Image generateImage(int width, int height, int seed = 42) {
     Image img;
     img.width = width;
@@ -42,7 +44,9 @@ Image generateImage(int width, int height, int seed = 42) {
     return img;
 }
 
-// ---- Integral Image ----
+// calculeaza imaginea integrala (summed area table)
+// ne permite sa calculam suma oricarei ferestre in O(1) in loc de O(n^2)
+// formula clasica: integral[r][c] = val + sus + stanga - diagonal
 std::vector<long long> computeIntegral(const Image& img) {
     int W = img.width, H = img.height;
     std::vector<long long> integral(W * H, 0LL);
@@ -59,9 +63,12 @@ std::vector<long long> computeIntegral(const Image& img) {
     return integral;
 }
 
-// ---- Adaptive Thresholding (Bradley-Roth) ----
+// adaptive thresholding secvential (algoritmul Bradley-Roth)
+// fiecare pixel devine alb sau negru in functie de media vecinilor sai
+// fereastra de comparatie are dimensiunea windowSize x windowSize
 Image applyThreshold(const Image& src, int windowSize = 15, float T = 0.15f) {
-    int W = src.width, H = src.height;
+    int W = src.width;
+    int H = src.height;
     int half = windowSize / 2;
 
     auto integral = computeIntegral(src);
@@ -73,6 +80,7 @@ Image applyThreshold(const Image& src, int windowSize = 15, float T = 0.15f) {
 
     for (int r = 0; r < H; r++) {
         for (int c = 0; c < W; c++) {
+            // coordonatele ferestrei cu clamp la marginile imaginii
             int r1 = std::max(0, r - half);
             int r2 = std::min(H - 1, r + half);
             int c1 = std::max(0, c - half);
@@ -80,9 +88,10 @@ Image applyThreshold(const Image& src, int windowSize = 15, float T = 0.15f) {
 
             int count = (r2 - r1 + 1) * (c2 - c1 + 1);
 
+            // suma pixelilor din fereastra folosind imaginea integrala
             long long s = integral[r2 * W + c2];
-            if (r1 > 0) s -= integral[(r1 - 1) * W + c2];
-            if (c1 > 0) s -= integral[r2 * W + (c1 - 1)];
+            if (r1 > 0)           s -= integral[(r1 - 1) * W + c2];
+            if (c1 > 0)           s -= integral[r2 * W + (c1 - 1)];
             if (r1 > 0 && c1 > 0) s += integral[(r1 - 1) * W + (c1 - 1)];
 
             float mean = (float)s / count;
@@ -92,9 +101,12 @@ Image applyThreshold(const Image& src, int windowSize = 15, float T = 0.15f) {
     return dst;
 }
 
-// ---- Adaptive Thresholding PARALEL IN INTERIORUL IMAGINII ----
+// aceeasi functie ca mai sus, dar liniile imaginii sunt procesate in paralel
+// impartim intervalul [0, H) in blocuri si fiecare thread lucreaza pe blocul sau
+// imaginea integrala tot secvential se calculeaza, ea are dependinte intre linii
 Image applyThresholdParallelInside(const Image& src, int windowSize = 15, float T = 0.15f) {
-    int W = src.width, H = src.height;
+    int W = src.width;
+    int H = src.height;
     int half = windowSize / 2;
 
     auto integral = computeIntegral(src);
@@ -104,6 +116,8 @@ Image applyThresholdParallelInside(const Image& src, int windowSize = 15, float 
     dst.height = H;
     dst.data.resize(W * H);
 
+    // fiecare thread primeste un subset de linii si le proceseaza independent
+    // nu exista conflict intre thread-uri pentru ca scriu in locatii diferite din dst
     tbb::parallel_for(tbb::blocked_range<int>(0, H),
         [&](const tbb::blocked_range<int>& range) {
             for (int r = range.begin(); r < range.end(); r++) {
@@ -116,8 +130,8 @@ Image applyThresholdParallelInside(const Image& src, int windowSize = 15, float 
                     int count = (r2 - r1 + 1) * (c2 - c1 + 1);
 
                     long long s = integral[r2 * W + c2];
-                    if (r1 > 0) s -= integral[(r1 - 1) * W + c2];
-                    if (c1 > 0) s -= integral[r2 * W + (c1 - 1)];
+                    if (r1 > 0)           s -= integral[(r1 - 1) * W + c2];
+                    if (c1 > 0)           s -= integral[r2 * W + (c1 - 1)];
                     if (r1 > 0 && c1 > 0) s += integral[(r1 - 1) * W + (c1 - 1)];
 
                     float mean = (float)s / count;
@@ -129,7 +143,8 @@ Image applyThresholdParallelInside(const Image& src, int windowSize = 15, float 
     return dst;
 }
 
-// ---- Procesare SECVENTIALA a dataset-ului ----
+// varianta secventiala - procesam imaginile una dupa alta pe un singur thread
+// e varianta de referinta fata de care calculam speedup-ul
 std::vector<Image> processSequential(const std::vector<Image>& dataset) {
     std::vector<Image> results;
     results.reserve(dataset.size());
@@ -139,7 +154,9 @@ std::vector<Image> processSequential(const std::vector<Image>& dataset) {
     return results;
 }
 
-// ---- Procesare PARALELA INTRE IMAGINI ----
+// paralelism intre imagini - fiecare thread ia un grup de imagini si le proceseaza
+// imaginile sunt independente intre ele, deci nu avem probleme de sincronizare
+// functioneaza bine cand avem multe imagini
 std::vector<Image> processParallelBetween(const std::vector<Image>& dataset) {
     std::vector<Image> results(dataset.size());
 
@@ -153,7 +170,9 @@ std::vector<Image> processParallelBetween(const std::vector<Image>& dataset) {
     return results;
 }
 
-// ---- Procesare PARALELA IN INTERIORUL IMAGINILOR ----
+// paralelism in interiorul imaginii - imaginile se proceseaza una cate una
+// dar liniile fiecarei imagini sunt distribuite intre thread-uri
+// mai putin eficient decat cel de mai sus din cauza overhead-ului per imagine
 std::vector<Image> processParallelInside(const std::vector<Image>& dataset) {
     std::vector<Image> results;
     results.reserve(dataset.size());
@@ -163,7 +182,24 @@ std::vector<Image> processParallelInside(const std::vector<Image>& dataset) {
     return results;
 }
 
-// ---- Benchmark helper ----
+// varianta mixta - paralelism la ambele niveluri simultan
+// thread-urile proceseaza imagini diferite SI linii diferite din aceeasi imagine
+// in practica poate fi mai lent din cauza supraincarcarii thread pool-ului TBB
+std::vector<Image> processParallelMixed(const std::vector<Image>& dataset) {
+    std::vector<Image> results(dataset.size());
+
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, dataset.size()),
+        [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t i = range.begin(); i < range.end(); i++) {
+                results[i] = applyThresholdParallelInside(dataset[i]);
+            }
+        });
+
+    return results;
+}
+
+// ruleaza functia de mai multe ori si returneaza cel mai bun timp
+// folosim minimul ca sa eliminam variatiile datorate sistemului de operare
 template<typename Func>
 double benchmark(Func f, int repetitions = 3) {
     double best = 1e18;
@@ -177,7 +213,7 @@ double benchmark(Func f, int repetitions = 3) {
     return best;
 }
 
-// ---- Afisare rezultate ----
+// afiseaza timpul, speedup-ul si throughput-ul pentru o strategie
 void printResults(const std::string& name, double ms, double seqMs, int numImages) {
     double speedup = seqMs / ms;
     double throughput = numImages / (ms / 1000.0);
@@ -192,7 +228,7 @@ int main() {
     const int IMG_H = 512;
     const int NUM_IMAGES = 100;
 
-    // Genereaza dataset
+    // generam 100 de imagini sintetice cu seed-uri diferite
     std::vector<Image> dataset;
     dataset.reserve(NUM_IMAGES);
     for (int i = 0; i < NUM_IMAGES; i++) {
@@ -202,35 +238,40 @@ int main() {
     std::cout << "Dataset: " << NUM_IMAGES << " imagini " << IMG_W << "x" << IMG_H << "\n";
     std::cout << "=========================================\n";
 
-    // 1. Secvential
+    // rulam fiecare strategie si masuram timpul
     double seqMs = benchmark([&]() { processSequential(dataset); });
     printResults("SECVENTIAL", seqMs, seqMs, NUM_IMAGES);
 
-    // 2. Paralel intre imagini
     double parBetweenMs = benchmark([&]() { processParallelBetween(dataset); });
     printResults("PARALEL INTRE IMAGINI", parBetweenMs, seqMs, NUM_IMAGES);
 
-    // 3. Paralel in interiorul imaginilor
     double parInsideMs = benchmark([&]() { processParallelInside(dataset); });
     printResults("PARALEL IN INTERIORUL IMAGINII", parInsideMs, seqMs, NUM_IMAGES);
 
-    // 4. Analiza la diferite numere de thread-uri
+    double parMixedMs = benchmark([&]() { processParallelMixed(dataset); });
+    printResults("PARALEL MIXT (intre imagini + interior)", parMixedMs, seqMs, NUM_IMAGES);
+
+    // testam cum se comporta algoritmul cu 1/2/4/8/16 thread-uri
+    // ne asteaptam ca speedup-ul sa creasca pana la numarul de nuclee fizice
+    // dupa care eficienta scade pentru ca thread-urile se bat pe resurse
     std::cout << "\n=========================================\n";
-    std::cout << "Analiza speedup la diferite thread-uri (paralel intre imagini):\n";
+    std::cout << "Analiza la diferite numere de thread-uri (paralel intre imagini):\n";
     std::cout << "Threads | Timp(ms) | Speedup | Throughput(img/sec) | Eficienta\n";
     std::cout << "--------|----------|---------|---------------------|----------\n";
 
     for (int nThreads : {1, 2, 4, 8, 16}) {
+        // limitam TBB sa foloseasca exact nThreads thread-uri
         tbb::global_control gc(tbb::global_control::max_allowed_parallelism, nThreads);
         double ms = benchmark([&]() { processParallelBetween(dataset); });
         double speedup = seqMs / ms;
         double throughput = NUM_IMAGES / (ms / 1000.0);
+        // eficienta = cat % din capacitatea teoretica folosim
         double efficiency = speedup / nThreads * 100.0;
-        std::cout << "  " << nThreads << "     | "
-            << (int)ms << "       | "
-            << speedup << "x      | "
-            << (int)throughput << "                  | "
-            << efficiency << "%\n";
+        std::cout << "  " << nThreads
+            << "     | " << (int)ms
+            << "       | " << speedup
+            << "x      | " << (int)throughput
+            << "                  | " << efficiency << "%\n";
     }
 
     std::cout << "\nDone.\n";
