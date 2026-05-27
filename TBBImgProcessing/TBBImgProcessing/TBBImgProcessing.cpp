@@ -4,7 +4,8 @@
 #include <algorithm>
 #include <random>
 
-// ---- Structura imagine ----
+// structura de baza pentru o imagine grayscale
+// pixelii sunt stocati ca un vector 1D, accesat prin row*width+col
 struct Image {
     int width=0, height=0;
     std::vector<uint8_t> data;
@@ -39,7 +40,9 @@ Image generateImage(int width, int height, int seed = 42) {
     return img;
 }
 
-// ---- Integral Image ----
+// calculeaza imaginea integrala (summed area table)
+// ne permite sa calculam suma oricarei ferestre in O(1) in loc de O(n^2)
+// formula clasica: integral[r][c] = val + sus + stanga - diagonal
 std::vector<long long> computeIntegral(const Image& img) {
     int W = img.width, H = img.height;
     std::vector<long long> integral(W * H, 0LL);
@@ -56,9 +59,12 @@ std::vector<long long> computeIntegral(const Image& img) {
     return integral;
 }
 
-// ---- Adaptive Thresholding (Bradley-Roth) ----
+// adaptive thresholding secvential (algoritmul Bradley-Roth)
+// fiecare pixel devine alb sau negru in functie de media vecinilor sai
+// fereastra de comparatie are dimensiunea windowSize x windowSize
 Image applyThreshold(const Image& src, int windowSize = 15, float T = 0.15f) {
-    int W = src.width, H = src.height;
+    int W = src.width;
+    int H = src.height;
     int half = windowSize / 2;
 
     auto integral = computeIntegral(src);
@@ -70,6 +76,7 @@ Image applyThreshold(const Image& src, int windowSize = 15, float T = 0.15f) {
 
     for (int r = 0; r < H; r++) {
         for (int c = 0; c < W; c++) {
+            // coordonatele ferestrei cu clamp la marginile imaginii
             int r1 = std::max(0, r - half);
             int r2 = std::min(H - 1, r + half);
             int c1 = std::max(0, c - half);
@@ -77,9 +84,10 @@ Image applyThreshold(const Image& src, int windowSize = 15, float T = 0.15f) {
 
             int count = (r2 - r1 + 1) * (c2 - c1 + 1);
 
+            // suma pixelilor din fereastra folosind imaginea integrala
             long long s = integral[r2 * W + c2];
-            if (r1 > 0) s -= integral[(r1 - 1) * W + c2];
-            if (c1 > 0) s -= integral[r2 * W + (c1 - 1)];
+            if (r1 > 0)           s -= integral[(r1 - 1) * W + c2];
+            if (c1 > 0)           s -= integral[r2 * W + (c1 - 1)];
             if (r1 > 0 && c1 > 0) s += integral[(r1 - 1) * W + (c1 - 1)];
 
             float mean = (float)s / count;
@@ -105,7 +113,7 @@ int main() {
     const int IMG_H = 512;
     const int NUM_IMAGES = 100;
 
-    // Genereaza dataset
+    // generam 100 de imagini sintetice cu seed-uri diferite
     std::vector<Image> dataset;
     for (int i = 0; i < NUM_IMAGES; i++) {
         dataset.push_back(generateImage(IMG_W, IMG_H, i * 17 + 42));
